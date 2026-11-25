@@ -1,0 +1,610 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Coups de feu – Carte satellite avec filtres</title>
+<style>
+  :root{
+    --bg:#0b1220; --panel:#101a2e; --panel2:#0d1526; --ink:#e6edf7; --muted:#93a4bd;
+    --line:#22314d; --accent:#f59e0b;
+    --c556:#f59e0b; --c762:#38bdf8; --c86:#a78bfa; --c109:#fb7185; --cnone:#94a3b8;
+    --burst:#ef4444;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{font-family:"Segoe UI",system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--ink);overflow:hidden}
+  #layout{display:flex;height:100%}
+
+  /* ---------- Panneau latéral ---------- */
+  #sidebar{width:300px;min-width:300px;background:var(--panel);border-right:1px solid var(--line);
+    display:flex;flex-direction:column;overflow-y:auto;padding:14px}
+  h1{font-size:16px;margin:0 0 2px}
+  .sub{font-size:11.5px;color:var(--muted);margin:0 0 12px}
+  .section{border-top:1px solid var(--line);padding-top:10px;margin-top:10px}
+  .section h2{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 8px}
+  label.chk{display:flex;align-items:center;gap:8px;font-size:13px;padding:4px 2px;cursor:pointer;user-select:none}
+  label.chk input{accent-color:var(--accent);width:15px;height:15px}
+  .dot{width:12px;height:12px;border-radius:50%;display:inline-block;border:2px solid rgba(255,255,255,.55)}
+  .count{color:var(--muted);font-size:11px;margin-left:auto}
+  .hint{font-size:11px;color:var(--muted);line-height:1.45;margin:6px 0 0}
+
+  .sliderRow{display:flex;align-items:center;gap:8px;margin:8px 0 2px;font-size:12px}
+  .sliderRow output{font-variant-numeric:tabular-nums;font-size:12.5px;background:var(--panel2);
+    border:1px solid var(--line);border-radius:6px;padding:2px 7px;min-width:58px;text-align:center}
+  input[type=range]{width:100%;accent-color:var(--accent)}
+  .rangeWrap{border:1px solid var(--line);border-radius:10px;padding:10px;background:var(--panel2)}
+
+  button{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:8px;
+    padding:7px 12px;font-size:12.5px;cursor:pointer}
+  button:hover{border-color:var(--accent)}
+  #stats{font-size:12px;color:var(--muted);margin-top:10px}
+  #stats b{color:var(--ink)}
+
+  /* ---------- Carte ---------- */
+  #mapWrap{position:relative;flex:1;overflow:hidden;background:#070d18}
+  #mapInner{position:absolute;inset:0;overflow:hidden;cursor:grab}
+  #mapInner.dragging{cursor:grabbing}
+  #bgCanvas,#tileLayer,#salveLayer,#accLayer,#markerLayer{position:absolute;inset:0}
+  #tileLayer{overflow:hidden}
+  #tileLayer img{position:absolute;width:256px;height:256px;image-rendering:auto}
+  #salveLayer,#accLayer{pointer-events:none}
+  .shot{position:absolute;transform:translate(-50%,-50%);cursor:pointer;filter:drop-shadow(0 0 3px rgba(0,0,0,.9))}
+  .burstRing{animation:pulse 1.6s ease-out infinite;transform-origin:center}
+  @keyframes pulse{0%{opacity:.9;transform:scale(.6)}70%{opacity:0;transform:scale(1.6)}100%{opacity:0}}
+  #zoomCtl{position:absolute;top:12px;right:12px;display:flex;flex-direction:column;gap:6px;z-index:10}
+  #zoomCtl button{width:34px;height:34px;font-size:17px;padding:0;background:var(--panel);opacity:.92}
+  #finderNoTile{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);z-index:9;
+    background:rgba(13,21,38,.92);border:1px solid var(--line);border-radius:8px;padding:6px 12px;
+    font-size:11.5px;color:var(--muted);display:none;max-width:88%;text-align:center}
+
+  /* ---------- Popup ---------- */
+  #popup{position:absolute;z-index:20;background:rgba(13,21,38,.97);border:1px solid var(--line);
+    border-radius:10px;padding:10px 12px;font-size:12px;max-width:250px;display:none;box-shadow:0 6px 24px rgba(0,0,0,.5)}
+  #popup h3{margin:0 0 6px;font-size:13px;display:flex;align-items:center;gap:7px}
+  #popup .close{position:absolute;top:4px;right:6px;border:none;background:none;color:var(--muted);font-size:14px;padding:2px 4px}
+  #popup table{border-collapse:collapse;width:100%}
+  #popup td{padding:2px 0;vertical-align:top}
+  #popup td:first-child{color:var(--muted);padding-right:10px;white-space:nowrap}
+
+  /* ---------- Légende ---------- */
+  #legend{position:absolute;left:12px;bottom:12px;z-index:15;background:rgba(13,21,38,.95);
+    border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:11.5px;max-width:230px}
+  #legend h2{margin:0 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+  #legend .row{display:flex;align-items:center;gap:8px;margin:3px 0}
+  #legend svg{flex:none}
+
+  @media (max-width:760px){
+    #layout{flex-direction:column}
+    #sidebar{width:100%;min-width:0;max-height:46%;border-right:none;border-bottom:1px solid var(--line)}
+  }
+</style>
+</head>
+<body>
+<div id="layout">
+  <aside id="sidebar">
+    <h1>📍 Coups de feu détectés</h1>
+    <p class="sub">Gassco · juin à novembre 2026 · 62 tirs · fond satellite Apple Maps</p>
+
+    <div class="section">
+      <h2>Calibres</h2>
+      <div id="calFilters"></div>
+    </div>
+
+    <div class="section">
+      <h2>Bursts</h2>
+      <label class="chk"><input type="checkbox" id="burstOnly"> Afficher uniquement les bursts</label>
+      <p class="hint">Un burst est un tir pour lequel une cadence de tir (rpm), un nombre de tirs, ou des impacts rapprochés à moins de 5&nbsp;s ont été identifiés.</p>
+    </div>
+
+    <div class="section">
+      <h2>Plage horaire</h2>
+      <div class="rangeWrap">
+        <div class="sliderRow"><span>Début</span><output id="hStartOut">00h00</output></div>
+        <input type="range" id="hStart" min="0" max="24" value="0" step="0.5">
+        <div class="sliderRow"><span>Fin</span><output id="hEndOut">24h00</output></div>
+        <input type="range" id="hEnd" min="0" max="24" value="24" step="0.5">
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Fond de carte</h2>
+      <label class="chk"><input type="radio" name="basemap" value="0" checked> Apple Maps (satellite)</label>
+      <label class="chk"><input type="radio" name="basemap" value="1"> Esri World Imagery</label>
+      <input id="appleKey" type="text" placeholder="Clé Apple (accessKey), optionnelle"
+        style="width:100%;margin-top:6px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--ink);padding:7px 9px;font-size:12px">
+      <p class="hint">L'imagerie satellite Apple exige une «&nbsp;accessKey&nbsp;» temporaire obtenue auprès d'Apple (MapKit JS) ou capturée depuis maps.apple.com / DuckDuckGo Maps (onglet réseau du navigateur). Sans clé valide, le fond bascule automatiquement sur Esri.</p>
+    </div>
+
+    <div class="section">
+      <h2>Affichage</h2>
+      <label class="chk"><input type="checkbox" id="accToggle"> Cercles de précision GPS</label>
+      <label class="chk"><input type="checkbox" id="salveToggle" checked> Relier les salves</label>
+      <div id="stats"></div>
+    </div>
+
+    <div class="section">
+      <button id="resetBtn">↺ Réinitialiser la vue &amp; les filtres</button>
+    </div>
+  </aside>
+
+  <div id="mapWrap">
+    <div id="mapInner">
+      <canvas id="bgCanvas"></canvas>
+      <div id="tileLayer"></div>
+      <svg id="salveLayer"></svg>
+      <div id="accLayer"></div>
+      <div id="markerLayer"></div>
+    </div>
+    <div id="zoomCtl">
+      <button id="zoomIn" title="Zoom avant">+</button>
+      <button id="zoomOut" title="Zoom arrière">−</button>
+    </div>
+    <div id="legend">
+      <h2>Légende</h2>
+      <div class="row"><svg width="16" height="16"><circle cx="8" cy="8" r="5" fill="#f59e0b" stroke="#fff"/></svg> 5.56 mm identifié</div>
+      <div class="row"><svg width="16" height="16"><circle cx="8" cy="8" r="5" fill="#38bdf8" stroke="#fff"/></svg> 7.62 mm identifié</div>
+      <div class="row"><svg width="16" height="16"><circle cx="8" cy="8" r="5" fill="#a78bfa" stroke="#fff"/></svg> 8.6 mm identifié</div>
+      <div class="row"><svg width="16" height="16"><circle cx="8" cy="8" r="5" fill="#fb7185" stroke="#fff"/></svg> 10.9 mm identifié</div>
+      <div class="row"><svg width="16" height="16"><circle cx="8" cy="8" r="5" fill="#94a3b8" stroke="#fff"/></svg> Calibre non identifié</div>
+      <div class="row"><svg width="18" height="18"><circle cx="9" cy="9" r="4" fill="#fff" stroke="#fff"/><circle cx="9" cy="9" r="8" fill="none" stroke="#ef4444" stroke-width="2.4"/></svg> Burst (cadence / salve)</div>
+      <div class="row"><svg width="18" height="18"><line x1="1" y1="9" x2="17" y2="9" stroke="#ef4444" stroke-width="2" stroke-dasharray="3 3"/></svg> Shots d'une même salve</div>
+      <div class="row"><svg width="18" height="18"><circle cx="9" cy="9" r="7.5" fill="none" stroke="#93a4bd" stroke-dasharray="3 3"/></svg> Précision GPS (rayon)</div>
+    </div>
+    <div id="finderNoTile">Fond satellite indisponible dans cet aperçu (Apple et Esri inaccessibles hors ligne). Téléchargez le fichier et ouvrez-le dans un navigateur connecté pour afficher l'imagerie satellite.</div>
+    <div id="popup"></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* ================= Données =================
+   timestamp | lat | lon | précision (m) | arme | calibre:… sil:… | rpm:… shots:…  */
+const RAW = `2026-06-05T22:27:44.003+02:00|51.008539|2.248517|6|||
+2026-06-21T23:46:03.237+02:00|51.011309|2.250923|11|||
+2026-07-02T22:37:34.856+02:00|51.012447|2.250064|17|||
+2026-07-02T22:37:36.812+02:00|51.012427|2.250022|9|||
+2026-07-13T21:26:31.260+02:00|51.012127|2.249278|9|||
+2026-08-17T21:59:04.747+02:00|51.007903|2.250964|18|||
+2026-08-17T21:59:07.220+02:00|51.007781|2.25111|16|||
+2026-08-17T21:59:08.988+02:00|51.007193|2.251901|14|||
+2026-08-25T21:39:24.307+02:00|51.008025|2.250463|23|||
+2026-09-07T00:03:22.426+02:00|51.00624|2.25265|6|||
+2026-09-15T23:23:08.803+02:00|51.012724|2.249656|14|||
+2026-10-11T16:43:49.521+02:00|51.004419|2.248922|20|Rifle (ok match)||
+2026-10-11T20:48:01.699+02:00|51.004937|2.25129|29|Rifle|sil:No silencer (ok match)
+2026-10-14T22:57:46.971+02:00|51.009383|2.248351|6|Rifle (ok match)|sil:No silencer (ok match)|rpm:662
+2026-10-14T23:05:18.158+02:00|50.999459|2.24336|6|||sil:No silencer
+2026-10-15T20:53:42.686+02:00|51.00345|2.25095|18|Rifle (ok match)||
+2026-10-15T21:05:16.370+02:00|51.003553|2.250352|8|Rifle (ok match)|sil:No silencer|
+2026-10-19T10:34:51.863+02:00|51.012714|2.249562|7|Rifle (ok match)|sil:No silencer (ok match)|
+2026-10-19T10:36:22.397+02:00|51.012697|2.250472|6|Rifle|sil:No silencer (ok match)|
+2026-10-19T10:36:24.902+02:00|51.012738|2.250657|7|Rifle (ok match)|sil:No silencer (ok match)|
+2026-10-22T18:54:03.951+02:00|51.008764|2.247909|8|Rifle (ok match)|sil:No silencer|
+2026-10-24T11:02:53.956+02:00|51.007258|2.242628|7|Rifle|sil:No silencer|
+2026-10-26T18:56:15.774+01:00|51.003217|2.249823|6|Rifle (ok match)|cal:5.56mm (ok match)|
+2026-10-29T04:46:43.399+01:00|51.003498|2.250034|176|Rifle (ok match)|sil:No silencer (ok match)|
+2026-10-30T18:20:18.205+01:00|51.004174|2.254953|17|Rifle (ok match)|sil:No silencer (ok match)|
+2026-10-31T16:17:06.478+01:00|51.013004|2.248311|334|Rifle (ok match)|sil:No silencer|
+2026-10-31T22:27:57.553+01:00|51.007253|2.249899|6|Rifle (ok match)|cal:7.62mm (ok match);sil:No silencer (ok match)|rpm:297
+2026-10-31T22:27:57.854+01:00|51.002719|2.249553|9|Rifle (ok match)|sil:No silencer|
+2026-10-31T22:38:06.692+01:00|51.002381|2.248451|12|Rifle|sil:No silencer (ok match)|
+2026-11-01T22:39:56.757+01:00|51.003345|2.250288|4|Rifle (ok match)|sil:No silencer (ok match)|
+2026-11-03T22:31:13.536+01:00|51.003055|2.251322|10|Pistol (ok match)|cal:10.9mm (ok match);sil:No silencer|
+2026-11-05T16:11:14.598+01:00|51.00315|2.254762|6|Rifle (ok match)|sil:No silencer (ok match)|rpm:1096
+2026-11-05T16:11:33.753+01:00|51.003018|2.255072|24|Pistol (ok match)|sil:No silencer|
+2026-11-05T16:11:46.207+01:00|51.003001|2.255118|23|Rifle (ok match)|sil:No silencer (ok match)|rpm:1035
+2026-11-06T18:07:43.370+01:00|51.004303|2.255996|117|Rifle|sil:No silencer|
+2026-11-06T20:10:47.469+01:00|51.003319|2.250231|4|Rifle|sil:No silencer|
+2026-11-08T20:48:55.721+01:00|50.999718|2.242602|37|||sil:No silencer (ok match)
+2026-11-09T14:20:48.348+01:00|51.005134|2.251133|13|Pistol (ok match)|sil:No silencer (ok match)|
+2026-11-09T14:20:48.695+01:00|51.005126|2.251145|13|Pistol (ok match)|cal:5.56mm (ok match)|
+2026-11-09T18:14:58.285+01:00|51.002529|2.249338|4|Rifle|sil:No silencer|
+2026-11-09T18:38:04.827+01:00|51.002531|2.24933|4|Rifle (ok match)|sil:No silencer|
+2026-11-10T14:39:25.666+01:00|51.002886|2.251137|17|Rifle|sil:No silencer (ok match)|
+2026-11-10T15:16:20.026+01:00|51.003328|2.250747|25|Rifle (ok match)|cal:5.56mm (ok match);sil:No silencer|
+2026-11-10T15:17:02.964+01:00|51.003974|2.250536|14|Rifle|cal:8.6mm (ok match);sil:No silencer|
+2026-11-10T15:39:43.005+01:00|51.00315|2.251091|18|Rifle|sil:No silencer|
+2026-11-14T13:37:08.212+01:00|51.013239|2.250907|35|Rifle|cal:8.6mm (ok match);sil:No silencer|
+2026-11-14T16:56:22.482+01:00|51.006888|2.25219|12|Rifle|cal:5.56mm (ok match)|
+2026-11-14T17:11:45.981+01:00|51.006877|2.252207|11|Rifle|cal:7.62mm (ok match);sil:No silencer (ok match)|
+2026-11-15T00:22:38.293+01:00|51.004258|2.252317|12|Rifle (ok match)|sil:No silencer (ok match)|rpm:278
+2026-11-15T00:23:10.289+01:00|51.004171|2.252057|15|Rifle (ok match)|sil:No silencer (ok match)|
+2026-11-15T10:23:53.699+01:00|51.010481|2.249324|9|||sil:No silencer
+2026-11-15T15:31:03.026+01:00|51.007779|2.24926|40|Rifle|sil:No silencer|
+2026-11-16T17:49:11.266+01:00|51.007732|2.249073|34|Rifle|sil:No silencer (ok match)|
+2026-11-16T17:50:30.423+01:00|51.008185|2.24873|34|Rifle|cal:8.6mm (ok match);sil:No silencer (ok match)|
+2026-11-21T16:36:28.650+01:00|51.001239|2.248791|5|Rifle (ok match)|sil:No silencer (ok match)|
+2026-11-22T03:19:56.949+01:00|51.003311|2.249625|7|Rifle (ok match)|cal:5.56mm (ok match);sil:No silencer (ok match)|
+2026-11-22T03:20:48.828+01:00|51.004629|2.254434|60|Rifle (ok match)|cal:5.56mm (ok match);sil:No silencer|
+2026-11-22T16:06:34.218+01:00|51.004368|2.252004|7|Rifle (ok match)|cal:5.56mm (ok match);sil:No silencer|rpm:1100;shots:3
+2026-11-22T20:13:03.947+01:00|51.004185|2.255779|9|Rifle|sil:No silencer|
+2026-11-23T05:02:43.635+01:00|51.003253|2.248876|20|Rifle (ok match)|cal:8.6mm (ok match);sil:No silencer|
+2026-11-23T12:25:23.129+01:00|51.008312|2.24656|25|Rifle (ok match)|sil:No silencer (ok match)|
+2026-11-23T12:36:08.856+01:00|51.007683|2.250068|48|Rifle|sil:No silencer (ok match)|`;
+
+/* ================= Parsing ================= */
+const CALS = ["5.56","7.62","8.6","10.9"];
+const CAL_COLOR = {"5.56":"#f59e0b","7.62":"#38bdf8","8.6":"#a78bfa","10.9":"#fb7185",null:"#94a3b8"};
+const CAL_LABEL = {"5.56":"5.56 mm","7.62":"7.62 mm","8.6":"8.6 mm","10.9":"10.9 mm",null:"Non identifié"};
+
+const shots = RAW.trim().split("\n").map((line, i) => {
+  const p = line.split("|");
+  const ts = p[0];
+  const local = ts.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/);
+  const tags = p[5] ? p[5].split(";") : [];
+  let caliber = null, silencer = null;
+  tags.forEach(t => {
+    if (t.startsWith("cal:")) caliber = t.slice(4).split(" ")[0].replace("mm","");
+    if (t.startsWith("sil:")) silencer = t.slice(4);
+  });
+  const rpm  = p[6] ? (p[6].match(/rpm:(\d+)/) || [])[1] : null;
+  const nbShots = p[6] ? (p[6].match(/shots:(\d+)/) || [])[1] : null;
+  return {
+    id: i, ts, tsDate: new Date(ts),
+    date: local[3] + "/" + local[2] + "/" + local[1],
+    time: local[4] + ":" + local[5] + ":" + local[6],
+    hour: +local[4] + (+local[5] + (+local[6]) / 60) / 60,
+    lat: +p[1], lon: +p[2], acc: parseFloat(p[3]),
+    weapon: p[4] || null, caliber, silencer,
+    rpm: rpm ? +rpm : null, shots: nbShots ? +nbShots : null,
+    cluster: -1
+  };
+});
+
+/* Regroupement des salves : tirs consécutifs à ≤ 5 s et ≤ 150 m */
+function distKm(a, b) {
+  const R = 6371, dLat = (b.lat - a.lat) * Math.PI / 180;
+  const dLon = (b.lon - a.lon) * Math.PI / 180;
+  const la1 = a.lat * Math.PI / 180, la2 = b.lat * Math.PI / 180;
+  const h = Math.sin(dLat/2)**2 + Math.cos(la1)*Math.cos(la2)*Math.sin(dLon/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+shots.sort((a,b) => a.ts < b.ts ? -1 : 1);
+let clusters = [];
+{
+  let cur = [shots[0]];
+  const flush = () => {
+    if (cur.length > 1) { cur.forEach(s => s.cluster = clusters.length); clusters.push(cur.map(s => s.id)); }
+  };
+  for (let k = 1; k < shots.length; k++) {
+    const dt = (shots[k].tsDate - shots[k-1].tsDate) / 1000;
+    const d = distKm(shots[k], shots[k-1]);
+    if (dt <= 5 && d <= 0.15) { cur.push(shots[k]); }
+    else { flush(); cur = [shots[k]]; }
+  }
+  flush();
+}
+shots.sort((a,b) => a.id - b.id);
+const isBurst = s => !!(s.rpm || s.shots || s.cluster >= 0);
+const calKey = s => (CALS.includes(s.caliber) ? s.caliber : null);
+
+/* ================= Projection & carte ================= */
+const map = document.getElementById("mapInner");
+const tileLayer = document.getElementById("tileLayer");
+const bg = document.getElementById("bgCanvas");
+const bctx = bg.getContext("2d");
+const markerLayer = document.getElementById("markerLayer");
+const salveLayer = document.getElementById("salveLayer");
+const accLayer = document.getElementById("accLayer");
+const popup = document.getElementById("popup");
+const TILE = 256;
+
+let view = { lat: 51.0055, lon: 2.2495, zoom: 15 };
+let srcIndex = 0, srcFails = [0, 0], esriAuto = true;   /* 0 = Apple Maps, 1 = Esri */
+const SOURCES = [
+  { name: "Apple Maps satellite",
+    url: (z, x, y) => {
+      const key = (document.getElementById("appleKey").value.trim() || "");
+      return "https://sat-cdn.apple-mapkit.com/tile?style=7&size=2&scale=1&z=" + z +
+             "&x=" + x + "&y=" + y + "&v=2513" + (key ? "&accessKey=" + encodeURIComponent(key) : "");
+    } },
+  { name: "Esri World Imagery",
+    url: (z, x, y) => "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/" + z + "/" + y + "/" + x }
+];
+const lonToWorldX = (lon, z) => (lon + 180) / 360 * TILE * Math.pow(2, z);
+const latToWorldY = (lat, z) => {
+  const s = Math.sin(lat * Math.PI / 180);
+  return (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * TILE * Math.pow(2, z);
+};
+const mPerPixel = (lat, z) => 156543.03392 * Math.cos(lat * Math.PI / 180) / Math.pow(2, z);
+
+let tiles = new Map(), failedTiles = 0, totalTilesLoaded = 0;
+function cssSize() { return { w: map.clientWidth, h: map.clientHeight }; }
+
+function render() {
+  const { w, h } = cssSize();
+  if (!w || !h) { requestAnimationFrame(render); return; }
+  bg.width = w; bg.height = h;
+  const ow = lonToWorldX(view.lon, view.zoom) - w / 2;
+  const oh = latToWorldY(view.lat, view.zoom) - h / 2;
+
+  /* Fond : graticule de secours sous les tuiles satellite */
+  bctx.fillStyle = "#0a1526"; bctx.fillRect(0, 0, w, h);
+  bctx.strokeStyle = "rgba(120,150,200,.14)"; bctx.lineWidth = 1;
+  const kmPerPx = mPerPixel(view.lat, view.zoom) / 1000;
+  let spanKm = w * kmPerPx;
+  const picks = [0.001,0.002,0.005,0.01,0.02,0.05,0.1];
+  let step = picks.find(v => v * 111 * 2 > spanKm / 5) || 0.1;
+  bctx.font = "10px sans-serif"; bctx.fillStyle = "rgba(147,164,189,.55)";
+  const topLat = yToLat(oh, view.zoom), botLat = yToLat(oh + h, view.zoom);
+  for (let la = Math.floor(botLat / step) * step; la <= topLat + step; la += step) {
+    const y = latToWorldY(la, view.zoom) - oh;
+    bctx.beginPath(); bctx.moveTo(0, y); bctx.lineTo(w, y); bctx.stroke();
+    bctx.fillText(la.toFixed(3), 4, y - 3);
+  }
+  const leftLon = xToLon(ow, view.zoom), rightLon = xToLon(ow + w, view.zoom);
+  for (let lo = Math.floor(leftLon / step) * step; lo <= rightLon + step; lo += step) {
+    const x = lonToWorldX(lo, view.zoom) - ow;
+    bctx.beginPath(); bctx.moveTo(x, 0); bctx.lineTo(x, h); bctx.stroke();
+    bctx.fillText(lo.toFixed(3), x + 3, 12);
+  }
+
+  /* Chargement des tuiles selon la source courante (Apple Maps ou Esri) */
+  const z = Math.round(view.zoom);
+  const n = Math.pow(2, z);
+  const tx0 = Math.floor(ow / TILE), tx1 = Math.floor((ow + w) / TILE);
+  const ty0 = Math.max(0, Math.floor(oh / TILE)), ty1 = Math.min(n - 1, Math.floor((oh + h) / TILE));
+  const keep = new Set();
+  for (let ty = ty0; ty <= ty1; ty++) for (let tx = tx0; tx <= tx1; tx++) {
+    const wx = ((tx % n) + n) % n;
+    const key = z + "/" + wx + "/" + ty;
+    keep.add(key);
+    if (!tiles.has(key)) {
+      const img = new Image();
+      img.src = SOURCES[srcIndex].url(z, wx, ty);
+      img.onload = () => { totalTilesLoaded++; render(); };
+      img.onerror = () => {
+        failedTiles++;
+        img.remove(); tiles.delete(key);
+        srcFails[srcIndex]++;
+        if (esriAuto && totalTilesLoaded === 0 && srcFails[srcIndex] >= 8) switchSource(srcIndex + 1);
+        else if (totalTilesLoaded === 0 && failedTiles >= 6) showNoTile();
+      };
+      tiles.set(key, img);
+    }
+    const im = tiles.get(key);
+    im.style.left = (wx * TILE - ow) + "px";
+    im.style.top  = (ty * TILE - oh) + "px";
+    if (!im.parentNode) tileLayer.appendChild(im);
+  }
+  tiles.forEach((im, key) => { if (!keep.has(key) && im.parentNode) im.remove(); });
+
+  positionMarkers(ow, oh);
+}
+const yToLat = (y, z) => {
+  const n = Math.PI * (1 - 2 * y / (TILE * Math.pow(2, z)));
+  return 180 / Math.PI * Math.atan(Math.sinh(n));
+};
+const xToLon = (x, z) => x / (TILE * Math.pow(2, z)) * 360 - 180;
+function showNoTile() { document.getElementById("finderNoTile").style.display = "block"; }
+function clearTiles() {
+  tiles.forEach(im => im.remove());
+  tiles.clear();
+  totalTilesLoaded = 0;
+}
+function switchSource(i) {
+  if (i >= SOURCES.length) { showNoTile(); return; }
+  srcIndex = i;
+  clearTiles();
+  const radio = document.querySelector('input[name="basemap"][value="' + i + '"]');
+  if (radio) radio.checked = true;
+  render();
+}
+document.querySelectorAll('input[name="basemap"]').forEach(r => {
+  r.addEventListener("change", () => {
+    if (!r.checked) return;
+    srcIndex = +r.value;
+    srcFails[+r.value] = 0;
+    esriAuto = true;
+    document.getElementById("finderNoTile").style.display = "none";
+    clearTiles();
+    render();
+  });
+});
+document.getElementById("appleKey").addEventListener("change", () => {
+  if (srcIndex === 0) { srcFails[0] = 0; esriAuto = true; clearTiles(); render(); }
+});
+
+/* ================= Marqueurs ================= */
+const markers = new Map();
+function markerSvg(s) {
+  const color = CAL_COLOR[calKey(s)];
+  const burst = isBurst(s);
+  const r = burst ? 8 : 6;
+  let inner = '<circle cx="15" cy="15" r="' + r + '" fill="' + color + '" stroke="#fff" stroke-width="1.6"/>';
+  if (burst) inner += '<circle class="burstRing" cx="15" cy="15" r="9" fill="none" stroke="#ef4444" stroke-width="2.6"/>';
+  return '<svg width="30" height="30" viewBox="0 0 30 30">' + inner + '</svg>';
+}
+function buildMarkers() {
+  markerLayer.innerHTML = "";
+  markers.clear();
+  shots.forEach(s => {
+    const el = document.createElement("div");
+    el.className = "shot";
+    el.innerHTML = markerSvg(s);
+    el.addEventListener("click", e => { e.stopPropagation(); openPopup(s, el); });
+    markers.set(s.id, el);
+    markerLayer.appendChild(el);
+  });
+}
+function positionMarkers(ow, oh) {
+  const { w, h } = cssSize();
+  shots.forEach(s => {
+    const el = markers.get(s.id);
+    if (!el) return;
+    if (!currentFilter(s)) { el.style.display = "none"; return; }
+    const x = lonToWorldX(s.lon, view.zoom) - ow;
+    const y = latToWorldY(s.lat, view.zoom) - oh;
+    if (x < -40 || y < -40 || x > w + 40 || y > h + 40) { el.style.display = "none"; return; }
+    el.style.display = "block";
+    el.style.left = x + "px"; el.style.top = y + "px";
+  });
+  renderAcc(ow, oh);
+  renderSalves(ow, oh);
+}
+
+/* Cercles de précision */
+const accEls = new Map();
+function renderAcc(ow, oh) {
+  shots.forEach(s => {
+    let el = accEls.get(s.id);
+    if (!el) {
+      el = document.createElement("div");
+      el.style.cssText = "position:absolute;border:1.5px dashed rgba(147,164,189,.8);border-radius:50%;transform:translate(-50%,-50%);pointer-events:none";
+      accEls.set(s.id, el); accLayer.appendChild(el);
+    }
+    const on = document.getElementById("accToggle").checked && currentFilter(s) && s.acc < 400;
+    if (!on) { el.style.display = "none"; return; }
+    const px = s.acc / mPerPixel(view.lat, view.zoom) * 2;
+    el.style.display = "block";
+    el.style.width = el.style.height = px + "px";
+    el.style.left = (lonToWorldX(s.lon, view.zoom) - ow) + "px";
+    el.style.top  = (latToWorldY(s.lat, view.zoom) - oh) + "px";
+  });
+}
+
+/* Salves reconnues */
+function renderSalves(ow, oh) {
+  const show = document.getElementById("salveToggle").checked;
+  if (!show) { salveLayer.innerHTML = ""; return; }
+  salveLayer.setAttribute("width", cssSize().w); salveLayer.setAttribute("height", cssSize().h);
+  let html = "";
+  clusters.forEach(ids => {
+    const pts = ids.map(id => shots[id]).filter(currentFilter);
+    if (pts.length < 2) return;
+    const d = pts.map(p => (lonToWorldX(p.lon, view.zoom) - ow) + "," + (latToWorldY(p.lat, view.zoom) - oh)).join(" ");
+    html += '<polyline points="' + d + '" fill="none" stroke="#ef4444" stroke-width="2" stroke-dasharray="5 4" opacity=".85"/>';
+  });
+  salveLayer.innerHTML = html;
+}
+
+/* ================= Popup ================= */
+function openPopup(s, el) {
+  const rows = [
+    ["Horodatage", s.date + " à " + s.time],
+    ["Position", s.lat.toFixed(6) + ", " + s.lon.toFixed(6)],
+    ["Précision", "± " + s.acc + " m"],
+    ["Arme", s.weapon || "Non identifiée"],
+    ["Calibre", s.caliber ? CAL_LABEL[s.caliber] : "Non identifié"],
+    ["Silencieux", s.silencer || "—"],
+  ];
+  if (s.rpm) rows.push(["Cadence burst", s.rpm + " rpm"]);
+  if (s.shots) rows.push(["Tirs détectés", s.shots + " tirs"]);
+  if (s.cluster >= 0) rows.push(["Salve", "Tir groupé avec " + (clusters[s.cluster].length - 1) + " autre(s) impact(s) (< 5 s)"]);
+  popup.innerHTML = '<button class="close">✕</button><h3><span style="width:10px;height:10px;border-radius:50%;display:inline-block;background:' + CAL_COLOR[calKey(s)] + '"></span>Coup de feu #' + (s.id + 1) + (isBurst(s) ? ' <span style="color:#ef4444;font-size:11px">BURST</span>' : '') + '</h3><table>' +
+    rows.map(r => "<tr><td>" + r[0] + "</td><td>" + r[1] + "</td></tr>").join("") + "</table>";
+  popup.style.display = "block";
+  const wrap = document.getElementById("mapWrap").getBoundingClientRect();
+  const er = el.getBoundingClientRect();
+  let x = er.right - wrap.left + 10, y = er.top - wrap.top - 8;
+  if (x + 260 > wrap.width) x = er.left - wrap.left - 262;
+  popup.style.left = Math.max(6, x) + "px";
+  popup.style.top = Math.min(Math.max(6, y), wrap.height - popup.offsetHeight - 6) + "px";
+  popup.querySelector(".close").onclick = () => popup.style.display = "none";
+}
+map.addEventListener("click", () => popup.style.display = "none");
+
+/* ================= Filtres ================= */
+const burstOnly = document.getElementById("burstOnly");
+const calChecks = {};
+const calBox = document.getElementById("calFilters");
+["5.56","7.62","8.6","10.9",null].forEach(k => {
+  const nShots = shots.filter(s => calKey(s) === k).length;
+  const lab = document.createElement("label");
+  lab.className = "chk";
+  lab.innerHTML = '<input type="checkbox" checked><span class="dot" style="background:' + CAL_COLOR[k] + '"></span> ' + CAL_LABEL[k] + '<span class="count">' + nShots + '</span>';
+  const cb = lab.querySelector("input");
+  cb.addEventListener("change", () => { calChecks[String(k)] = cb.checked; update(); });
+  cb.checked = true;
+  calChecks[String(k)] = true;
+  calBox.appendChild(lab);
+});
+
+const hStart = document.getElementById("hStart"), hEnd = document.getElementById("hEnd");
+const fmtH = v => String(Math.floor(v)).padStart(2, "0") + "h" + String(Math.round((v % 1) * 60)).padStart(2, "0");
+function syncHours(who) {
+  let a = +hStart.value, b = +hEnd.value;
+  if (a > b) { if (who === "s") { hEnd.value = a; b = a; } else { hStart.value = b; a = b; } }
+  document.getElementById("hStartOut").textContent = fmtH(a);
+  document.getElementById("hEndOut").textContent = fmtH(b);
+  update();
+}
+hStart.addEventListener("input", () => syncHours("s"));
+hEnd.addEventListener("input", () => syncHours("e"));
+burstOnly.addEventListener("change", update);
+document.getElementById("accToggle").addEventListener("change", update);
+document.getElementById("salveToggle").addEventListener("change", update);
+
+function currentFilter(s) {
+  if (!calChecks[String(calKey(s))]) return false;
+  if (burstOnly.checked && !isBurst(s)) return false;
+  const a = +hStart.value, b = +hEnd.value;
+  if (s.hour < a || s.hour > b) return false;
+  return true;
+}
+
+function update() {
+  const shown = shots.filter(currentFilter);
+  const nBurst = shown.filter(isBurst).length;
+  document.getElementById("stats").innerHTML = "<b>" + shown.length + "</b> / " + shots.length +
+    " coups de feu affichés · <b>" + nBurst + "</b> burst(s) · salves reconnues : <b>" +
+    shots.filter(s => s.cluster >= 0).length + "</b> tirs en " + clusters.length + " salve(s)";
+  const ow = lonToWorldX(view.lon, view.zoom) - cssSize().w / 2;
+  const oh = latToWorldY(view.lat, view.zoom) - cssSize().h / 2;
+  positionMarkers(ow, oh);
+}
+
+/* ================= Interactions carte ================= */
+let drag = null;
+map.addEventListener("mousedown", e => { drag = { x: e.clientX, y: e.clientY }; map.classList.add("dragging"); });
+window.addEventListener("mousemove", e => {
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  drag.x = e.clientX; drag.y = e.clientY;
+  const { w, h } = cssSize();
+  const ow = lonToWorldX(view.lon, view.zoom) - w / 2 - dx;
+  const oh = latToWorldY(view.lat, view.zoom) - h / 2 - dy;
+  view.lon = xToLon(ow + w / 2, view.zoom);
+  view.lat = yToLat(oh + h / 2, view.zoom);
+  render();
+});
+window.addEventListener("mouseup", () => { drag = null; map.classList.remove("dragging"); });
+map.addEventListener("wheel", e => {
+  e.preventDefault();
+  const { w, h } = cssSize();
+  const rect = map.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  const ow = lonToWorldX(view.lon, view.zoom) - w / 2, oh = latToWorldY(view.lat, view.zoom) - h / 2;
+  const wLat = yToLat(my + oh, view.zoom), wLon = xToLon(mx + ow, view.zoom);
+  view.zoom = Math.min(19, Math.max(2, view.zoom + (e.deltaY < 0 ? 0.5 : -0.5)));
+  const ow2 = lonToWorldX(wLon, view.zoom) - mx, oh2 = latToWorldY(wLat, view.zoom) - my;
+  view.lon = xToLon(ow2 + w / 2, view.zoom);
+  view.lat = yToLat(oh2 + h / 2, view.zoom);
+  render();
+}, { passive: false });
+document.getElementById("zoomIn").onclick  = () => { view.zoom = Math.min(19, view.zoom + 1); render(); };
+document.getElementById("zoomOut").onclick = () => { view.zoom = Math.max(2, view.zoom - 1); render(); };
+
+document.getElementById("resetBtn").onclick = () => {
+  view = { lat: 51.0055, lon: 2.2495, zoom: 15 };
+  hStart.value = 0; hEnd.value = 24; syncHours();
+  burstOnly.checked = false;
+  document.getElementById("accToggle").checked = false;
+  document.getElementById("salveToggle").checked = true;
+  Object.keys(calChecks).forEach(k => calChecks[k] = true);
+  calBox.querySelectorAll("input").forEach(cb => cb.checked = true);
+  popup.style.display = "none";
+};
+
+window.addEventListener("resize", render);
+
+/* ================= Init ================= */
+buildMarkers();
+render();
+update();
+setTimeout(render, 300);
+</script>
+</body>
+</html>
